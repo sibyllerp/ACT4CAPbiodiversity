@@ -22,6 +22,10 @@ get_abdlnd <- function(data,
     lc_class <- agmip_lc_class
     natcat <- "ONV"
   }
+  
+  first_year <- data %>% filter(value > 0 ) %>%
+    pull(year) %>%
+    min()
   # 
   # f_nf_share <- convert_spatial_data(from_col = "GLOB_SimUID",
   #                                    to_col = "EEA_10kmID",
@@ -127,13 +131,17 @@ get_abdlnd <- function(data,
     # mutate(value=value*forest_share) %>%
     # dplyr::select(-c(forest_share,nonforest_share)) %>% 
     arrange(ns,times) %>%
-    spread(times,value) %>% drop_na() %>%
-    pivot_longer(names_to = "times", values_to = "value", cols=-c("REGION", "ns")) %>%
-    mutate(lu.to ="restored", times= as.numeric(times))%>%
-    group_by(REGION, ns) %>%
-    arrange(times, .by_group = TRUE) %>%
-    mutate(value = cumsum(value)) %>%
-    ungroup()
+    spread(times,value) %>% drop_na()
+  
+  if(nrow(restored) > 0){
+    restored <- restored %>% 
+      pivot_longer(names_to = "times", values_to = "value", cols=-c("REGION", "ns")) %>%
+      mutate(lu.to ="restored", times= as.numeric(times))%>%
+      group_by(REGION, ns) %>%
+      arrange(times, .by_group = TRUE) %>%
+      mutate(value = cumsum(value)) %>%
+      ungroup()
+  }
   
   forest_new <- results %>% filter(lu.to == "FOR|PRIM") %>%
     #select(-lu.from) %>%
@@ -146,6 +154,9 @@ get_abdlnd <- function(data,
     ungroup() %>%
     pivot_wider(id_cols = c(1:3),names_from = "lu.to", values_from = "value") %>%
     replace(is.na(.), 0)   %>% replace(. < 0, 0) %>%
+    {for (col in c("FOR|PRIM", "restored")) {
+        if (!col %in% names(.)) .[[col]] <- 0}
+      .} %>% 
     group_by(REGION,times,ns) %>%
     mutate(`FOR|PRIM` = `FOR|PRIM` - restored,
            restored = ifelse(`FOR|PRIM` < 0, restored + `FOR|PRIM`, restored),
@@ -156,11 +167,11 @@ get_abdlnd <- function(data,
     # mutate(lu.to = ifelse(value < 0, "restored", lu.to),
     #        value = ifelse(value < 0, -value, value))
   
-  initial <- results %>% filter(times==2010) %>%
+  initial <- results %>% filter(times==first_year) %>%
     group_by(REGION,times,ns,lu.from) %>% summarise(value=sum(value)) %>%
     spread(lu.from,value) %>%
     gather(LC,value,-c(REGION,times,ns)) %>%
-    mutate(times=2000)
+    mutate(times=first_year-10)
   
   results_final <- results %>% filter(! lu.to %in% c("ONV","FOR|PRIM")) %>%
     group_by(REGION,times,ns,lu.to) %>% summarise(value=sum(value)) %>% ungroup() %>%
@@ -299,8 +310,6 @@ get_biodiversity <- function(data,
                              scen,
                              get_bii,
                              get_csar,
-                             start_restored_lnd,
-                             start_abn_land,
                              LUmapping = "AGMIP",
                              resolution="EEA_10kmID",
                              path_mapping # "Data-raw/one_kmID_master_mapping_2026-08-12.parquet"
@@ -310,7 +319,6 @@ get_biodiversity <- function(data,
     col_select = c("GLOB_SimUID", resolution, "GLOB_5arcminID_area_km2"),
     memory_map = FALSE
   ))[!is.na(get("GLOB_SimUID")) & get("GLOB_SimUID") != "GLOB_NA" & !is.na(get(resolution))]
-  
   
   f_nf_share <- convert_spatial_data(from_col = "GLOB_SimUID",
                                      to_col = resolution,
@@ -351,7 +359,9 @@ get_biodiversity <- function(data,
    years <- (data %>% arrange(times) %>% select(times) %>% unique())$times
  
   
-  
+   start_abn_land <- data %>% filter(value > 0 ) %>%
+     pull(times) %>%
+     min() + 10
   
   # Auxiliary function to recode BII coefficients
   # according to forest and non-forest ecosystems
@@ -365,7 +375,7 @@ get_biodiversity <- function(data,
     r_pltfor <- get_age(data %>% filter(LC=="AbnPltFor"),"AbnPltFor", years, start_abn_land)
     r_mngfor <- get_age(data %>% filter(LC=="AbnMngFor"),"AbnMngFor", years, start_abn_land)
     
-    restored_per_age <- get_age(data %>% filter(LC=="restored"),"restored", years, start_restored_lnd)
+    restored_per_age <- get_age(data %>% filter(LC=="restored"),"restored", years, start_abn_land)
     
     # Merge results
     data <- data %>% filter(!str_detect(LC,"Abn")) %>%
@@ -475,16 +485,16 @@ get_biodiversity <- function(data,
     # Calculate BII at the Simu and aggregate level
     bii_simu <- results_bii %>% 
       group_by(REGION,times,ns) %>%
-      summarise(score=sum(score, na.Rm=TRUE)/sum(value, na.Rm=TRUE),
-                score_prod=sum(score_prod, na.Rm=TRUE)/sum(pot_npp, na.Rm=TRUE),
-                value=sum(value, na.Rm=TRUE)) %>% 
+      summarise(score=sum(score, na.rm=TRUE)/sum(value, na.rm=TRUE),
+                score_prod=sum(score_prod, na.rm=TRUE)/sum(pot_npp, na.rm=TRUE),
+                value=sum(value, na.rm=TRUE)) %>% 
       mutate(ScenNr=scen)
     
     bii <- results_bii %>% 
       group_by(REGION, times) %>%
-      summarise(score=sum(score, na.Rm=TRUE)/sum(value, na.Rm=TRUE),
-                value=sum(value, na.Rm=TRUE),
-                score_prod=sum(score_prod, na.Rm=TRUE)/sum(pot_npp, na.Rm=TRUE)) %>%
+      summarise(score=sum(score, na.rm=TRUE)/sum(value, na.rm=TRUE),
+                value=sum(value, na.rm=TRUE),
+                score_prod=sum(score_prod, na.rm=TRUE)/sum(pot_npp, na.rm=TRUE)) %>%
       mutate(ScenNr=scen)
     
   } else {

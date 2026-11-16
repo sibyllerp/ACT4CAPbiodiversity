@@ -9,8 +9,6 @@ get_biodiversity(
   scen,
   get_bii,
   get_csar,
-  start_restored_lnd,
-  start_abn_land,
   LUmapping = "AGMIP",
   resolution = "EEA_10kmID",
   path_mapping
