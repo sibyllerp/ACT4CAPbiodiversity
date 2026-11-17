@@ -20,7 +20,7 @@ get_abdlnd <- function(data,
   
   if(LUmapping == "AGMIP"){
     lc_class <- agmip_lc_class
-    natcat <- "ONV"
+    natcat <- c("OLD")
   }
   
   first_year <- data %>% filter(value > 0 ) %>%
@@ -38,7 +38,8 @@ get_abdlnd <- function(data,
     rename("lu.from" ="from_class",
            "lu.to" = "to_class",
            "REGION" = "Ns_reg",
-           "times" = "year") 
+           "times" = "year") %>% 
+    filter(value != 0)
   
   check_lu <- results %>% filter(value>0) %>%
     group_by(REGION, ns, times, lu.to) %>%
@@ -55,7 +56,7 @@ get_abdlnd <- function(data,
   testthat::expect_equal(sum(check_lu$change_vs_first), 0, tolerance = 10^-6)
   testthat::expect_equal(sum(check_lu$change_vs_prev, na.rm = TRUE), 0, tolerance = 10^-6)
   
-  natlnd <- results %>% filter(lu.to == natcat) %>%
+  natlnd <- results %>% filter(lu.to %in% natcat) %>%
     tidyr::complete(REGION = unique(results$REGION),
                     times  = unique(results$times),
                     ns     = unique(results$ns),lu.from,lu.to) %>%
@@ -82,7 +83,7 @@ get_abdlnd <- function(data,
     mutate(lu.to="AbnCrpLnd") %>% relocate(times, .before=ns)
   
   # Abandoned grassland
-  abn_grslnd <- results %>% filter(str_detect("^GRS", lu.from), lu.to == natcat) %>%
+  abn_grslnd <- results %>% filter(str_detect("^GRS", lu.from), lu.to %in% natcat) %>%
     tidyr::complete(REGION = unique(results$REGION),
                     times  = unique(results$times),
                     ns     = unique(results$ns),lu.from,lu.to) %>% replace_na(list(value=0))%>%
@@ -90,7 +91,7 @@ get_abdlnd <- function(data,
     mutate(lu.to="AbnGrsLnd") %>% relocate(times, .before=ns)
   
   # Abandoned managed forests
-  abn_mngfor <- results %>% filter(str_detect("^FOR", lu.from),lu.to == natcat)  %>%
+  abn_mngfor <- results %>% filter(str_detect("^FOR", lu.from),lu.to %in% natcat)  %>%
     mutate(lu.from ="FOR") %>% group_by(REGION,ns,lu.from, lu.to, times) %>% 
     summarise(value = sum(value, na.rm=TRUE)) %>% ungroup() %>% 
     tidyr::complete(REGION = unique(results$REGION),
@@ -106,7 +107,7 @@ get_abdlnd <- function(data,
     left_join(abn_grslnd %>% rename(AbnGrsLnd=value) %>% ungroup %>% dplyr::select(-c(lu.to,lu.from)), by=c("REGION", "times", "ns")) %>%
     left_join(abn_mngfor %>% rename(AbnMngFor=value) %>% ungroup %>% dplyr::select(-c(lu.to,lu.from)), by=c("REGION", "times", "ns")) %>%
     left_join(natlnd_converted %>% rename(converted=value) %>% ungroup, by=c("times", "ns")) %>%
-    replace_na(list(AbnCrpLnd=0,AbnGrsLnd=0,AbnMngFor=0,converted=0)) #%>%
+    replace_na(list(AbnCrpLnd=0,AbnGrsLnd=0,AbnMngFor=0,converted=0)) 
   # select(REGION, times, ns, converted, contains("Abn"), OthNatLnd) %>%
   # mutate(balance=OthNatLnd-(AbnCrpLnd+AbnGrsLnd+AbnPltFor+AbnMngFor))
   
@@ -119,7 +120,8 @@ get_abdlnd <- function(data,
   # Combined natlnd and abandoned areas
   natlnd_cons <- natlnd_aux %>% dplyr::select(-converted) %>%
     mutate(ONV=ONV-(AbnCrpLnd+AbnGrsLnd+AbnMngFor)) %>%
-    gather(lu.to,value,-c(REGION,times,ns))#%>% replace(. < 0, 0)
+    gather(lu.to,value,-c(REGION,times,ns)) %>% filter(value != 0)
+  #%>% replace(. < 0, 0)
   
 # Restored is assumed to be transitions to Forest primary in forest biomes
   restored <- results %>% filter(lu.to == "FOR|PRIM" & lu.from != "FOR|PRIM") %>% 
@@ -173,7 +175,7 @@ get_abdlnd <- function(data,
     gather(LC,value,-c(REGION,times,ns)) %>%
     mutate(times=first_year-10)
   
-  results_final <- results %>% filter(! lu.to %in% c("ONV","FOR|PRIM")) %>%
+  results_final <- results %>% filter(! lu.to %in% c("OLD","FOR|PRIM")) %>%
     group_by(REGION,times,ns,lu.to) %>% summarise(value=sum(value)) %>% ungroup() %>%
     rbind(natlnd_cons, forest_new) %>%
     rename("LC"="lu.to") %>% 
@@ -248,6 +250,17 @@ rebalance <- function(x){
 #' @import tidyr
 #' @export
 process_csar <- function(x,lc_class, eco_map, csar_coefs){
+  
+  missing_lc <- x %>%
+    filter(value > 0) %>%
+    group_by(LC) %>% summarise(area = sum(value), .groups = "drop") %>%
+    anti_join(lc_class, by = "LC")
+  
+  if (nrow(missing_lc) > 0) {
+    warning("LC classes not found in lc_class: ",
+            paste(missing_lc$LC, collapse = ", "),
+            " | area affected: ", round(sum(missing_lc$area)), call. = FALSE)
+  }
   out <- x %>%
     left_join(lc_class %>% select(LC, "LUclass"="LC_csar"), by="LC") %>% 
     filter(! LC %in% c( "forest_new_ha","forest_old_ha")) %>% 
@@ -269,6 +282,17 @@ process_csar <- function(x,lc_class, eco_map, csar_coefs){
 #' @export
 process_bii <- function(x, lc_class, bii_coefs){
   
+  missing_lc <- x %>%
+    filter(value > 0) %>%
+    group_by(LC) %>% summarise(area = sum(value), .groups = "drop") %>%
+    anti_join(lc_class, by = "LC")
+  
+  if (nrow(missing_lc) > 0) {
+    warning("LC classes not found in lc_class: ",
+            paste(missing_lc$LC, collapse = ", "),
+            " | area affected: ", round(sum(missing_lc$area)), call. = FALSE)
+  }
+  
   out <- x %>%
     left_join(lc_class %>% select(-LU_class, -LC_csar), by="LC") %>% rename(LUclass=LC_bii) %>% 
     gather(pnv,f_nf_share,-c(REGION,times,ns,LC,LUclass,value,pot_npp)) %>%
@@ -278,7 +302,7 @@ process_bii <- function(x, lc_class, bii_coefs){
       pnv == "forest_share" ~ paste0(LUclass,"_f"),
       pnv == "nonforest_share"  ~  paste0(LUclass, "_nf"))) %>% 
     filter(! LC %in% c( "forest_new_ha","forest_old_ha")) %>%
-    left_join(bii_coefs, by=c("LUclass")) %>%
+    left_join(bii_coefs, by=c("LUclass"))   %>%
     mutate(value=ifelse(is.na(value),0,value)) %>% filter(value > 0, f_nf_share > 0)
   
   return(out)
