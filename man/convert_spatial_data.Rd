@@ -23,7 +23,11 @@ convert_spatial_data(
 
 \item{int_cols}{character string. colname from dt of ratio variables (wmean)}
 
+\item{keep_cols}{character string. colname from dt to keep}
+
 \item{dt}{datatable. initial datatable}
+
+\item{mg}{datatable. mapping}
 }
 \value{
 dt at the target level (to_col)

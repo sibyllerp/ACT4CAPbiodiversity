@@ -41,20 +41,8 @@ get_abdlnd <- function(data,
            "times" = "year") %>% 
     filter(value != 0)
   
-  check_lu <- results %>% filter(value>0) %>%
-    group_by(REGION, ns, times, lu.to) %>%
-    summarise(value=sum(value, na.rm=TRUE), .groups = "drop") %>%
-    ungroup() %>% 
-    pivot_wider(names_from = "lu.to") %>% 
-    mutate(total = rowSums(across(-c(REGION,ns, times)), na.rm=TRUE))%>%
-    group_by(REGION, ns) %>%
-    arrange(times, .by_group = TRUE) %>%
-    mutate(change_vs_first = total - first(total),
-           change_vs_prev  = total - lag(total)) %>%
-    ungroup()
-  
-  testthat::expect_equal(sum(check_lu$change_vs_first), 0, tolerance = 10^-6)
-  testthat::expect_equal(sum(check_lu$change_vs_prev, na.rm = TRUE), 0, tolerance = 10^-6)
+  # Checks
+  test_LUdata(results %>% rename("LC"="lu.to"))
   
   natlnd <- results %>% filter(lu.to %in% natcat) %>%
     tidyr::complete(REGION = unique(results$REGION),
@@ -180,34 +168,12 @@ get_abdlnd <- function(data,
     rbind(natlnd_cons, forest_new) %>%
     rename("LC"="lu.to") %>% 
     rbind(initial) %>%
-    mutate(ns = as.integer(ns))
+    mutate(ns = as.integer(ns)) %>% 
+    filter(value != 0)
   
   # Checks
-  check_lu <- results_final %>% filter(value>0) %>%
-    group_by(REGION, ns, times, LC) %>%
-    summarise(value=sum(value, na.rm=TRUE), .groups = "drop") %>%
-    ungroup() %>% 
-    pivot_wider(names_from = "LC") %>% 
-    mutate(total = rowSums(across(-c(REGION,ns, times)), na.rm=TRUE))%>%
-    group_by(REGION, ns) %>%
-    arrange(times, .by_group = TRUE) %>%
-    mutate(change_vs_first = total - first(total),
-           change_vs_prev  = total - lag(total)) %>%
-    ungroup()
+  test_LUdata(results_final)
   
-  # check 1: change vs first
-  chk1 <- all.equal(max(check_lu$change_vs_first), 0, tolerance = 1e-6)
-  if (!isTRUE(chk1)) {
-    warning("check_lu: change_vs_first differs from 0: ", paste(chk1, collapse = "; "),
-            call. = FALSE)
-  }
-  
-  # check 2: change vs previous
-  chk2 <- all.equal(max(check_lu$change_vs_prev, na.rm = TRUE), 0, tolerance = 1e-6)
-  if (!isTRUE(chk2)) {
-    warning("check_lu: change_vs_prev differs from 0: ", paste(chk2, collapse = "; "),
-            call. = FALSE)
-  }
   return(results_final)
 }
 
@@ -269,7 +235,7 @@ process_csar <- function(x,lc_class, eco_map, csar_coefs){
     mutate(value=ifelse(is.na(value),0,value)) %>% filter(value > 0) %>%
     mutate(CF=CF/10^3) %>%
     mutate(extinctions=value*CF*simu_share_in_eco,
-           value= value*simu_share_in_eco) %>% drop_na()
+           value= value*simu_share_in_eco) 
   
 }
 
@@ -342,7 +308,7 @@ get_biodiversity <- function(data,
   mapping <- as.data.table(read_parquet(path_mapping,
     col_select = c("GLOB_SimUID", resolution, "GLOB_5arcminID_area_km2"),
     memory_map = FALSE
-  ))[!is.na(get("GLOB_SimUID")) & get("GLOB_SimUID") != "GLOB_NA" & !is.na(get(resolution))]
+  ))[!is.na(get("GLOB_SimUID")) & !get("GLOB_SimUID") %in% c("GLOB_NA", "0") & !is.na(get(resolution))]
   
   f_nf_share <- convert_spatial_data(from_col = "GLOB_SimUID",
                                      to_col = resolution,
@@ -406,32 +372,9 @@ get_biodiversity <- function(data,
       filter(LC!="restored") %>% 
       rbind(r_crplnd,r_grslnd,r_pltfor,r_mngfor, restored_per_age) %>% drop_na()
   
-    # Checks - to be checked - currently fails
-    check_lu <- data %>% filter(value>0) %>%
-      group_by(REGION, ns, times, LC) %>%
-      summarise(value=sum(value, na.rm=TRUE), .groups = "drop") %>%
-      ungroup() %>%
-      pivot_wider(names_from = "LC") %>%
-      mutate(total = rowSums(across(-c(REGION,ns, times)), na.rm=TRUE))%>%
-      group_by(REGION, ns) %>%
-      arrange(times, .by_group = TRUE) %>%
-      mutate(change_vs_first = total - first(total),
-             change_vs_prev  = total - lag(total)) %>%
-      ungroup()
-
-    # check 1: change vs first
-    chk1 <- all.equal(max(check_lu$change_vs_first), 0, tolerance = 1e-6)
-    if (!isTRUE(chk1)) {
-      warning("check_lu: change_vs_first differs from 0: ", paste(chk1, collapse = "; "),
-              call. = FALSE)
-    }
+    # Checks
+    test_LUdata(data)
     
-    # check 2: change vs previous
-    chk2 <- all.equal(max(check_lu$change_vs_prev, na.rm = TRUE), 0, tolerance = 1e-6)
-    if (!isTRUE(chk2)) {
-      warning("check_lu: change_vs_prev differs from 0: ", paste(chk2, collapse = "; "),
-              call. = FALSE)
-    }
   ## Get BII indicator ----
   if (get_bii) {
     print("bii calculation")
@@ -521,6 +464,9 @@ get_biodiversity <- function(data,
                 score_prod=sum(score_prod, na.rm=TRUE)/sum(pot_npp, na.rm=TRUE)) %>%
       mutate(ScenNr=scen)
     
+    # Checks
+    test_LUdata(results_bii)
+    
   } else {
     bii_simu <- bii <-NULL
   }
@@ -571,15 +517,15 @@ get_biodiversity <- function(data,
     #%>%  mutate(ns=as.factor(ns))
     
     # Excluded ecoregions
-    my_excluded_ers <- c('AA0101','AA0102','AA0103','AA0108','AA0109','AA0110','AA0114','AA0118','AA0119','AA0125','AA0126','AA0202','AA0401','AA0407','AA1101','AA1401',
-                         'AN1101','AN1102','AN1103','AN1104',
-                         'AT0105','AT0113','AT0120','AT0127','AT0201','AT0703','AT0720','AT0802','AT0803','AT0902','AT1301','AT1308','AT1318','AT1405',
-                         'IM0101','IM0110','IM0114','IM0125','IM0127','IM0133','IM0143','IM0148','IM0156','IM0170','IM1401','IM1403',
-                         'NA0301','NA0525','NA0615','NA1102','NA1109','NA1112','NA1113','NA1117',
-                         'NT0102','NT0110','NT0116','NT0123','NT0134','NT0172','NT0179','NT0216','NT0218','NT0220','NT0226','NT0301','NT0401','NT0403','NT0705','NT1301','NT1305','NT1306','NT1307','NT1311','NT1314','NT1318','NT1402','NT1404','NT1406',
-                         'OC0101','OC0102','OC0103','OC0104','OC0105','OC0106','OC0107','OC0108','OC0109','OC0110','OC0111','OC0112','OC0113','OC0114','OC0115','OC0116','OC0117','OC0201','OC0202','OC0203','OC0204','OC0701','OC0702','OC0703',
-                         'PA0403','PA0425','PA0438','PA0807','PA1101','PA1109','PA1113','PA1203'
-    )
+    # my_excluded_ers <- c('AA0101','AA0102','AA0103','AA0108','AA0109','AA0110','AA0114','AA0118','AA0119','AA0125','AA0126','AA0202','AA0401','AA0407','AA1101','AA1401',
+    #                      'AN1101','AN1102','AN1103','AN1104',
+    #                      'AT0105','AT0113','AT0120','AT0127','AT0201','AT0703','AT0720','AT0802','AT0803','AT0902','AT1301','AT1308','AT1318','AT1405',
+    #                      'IM0101','IM0110','IM0114','IM0125','IM0127','IM0133','IM0143','IM0148','IM0156','IM0170','IM1401','IM1403',
+    #                      'NA0301','NA0525','NA0615','NA1102','NA1109','NA1112','NA1113','NA1117',
+    #                      'NT0102','NT0110','NT0116','NT0123','NT0134','NT0172','NT0179','NT0216','NT0218','NT0220','NT0226','NT0301','NT0401','NT0403','NT0705','NT1301','NT1305','NT1306','NT1307','NT1311','NT1314','NT1318','NT1402','NT1404','NT1406',
+    #                      'OC0101','OC0102','OC0103','OC0104','OC0105','OC0106','OC0107','OC0108','OC0109','OC0110','OC0111','OC0112','OC0113','OC0114','OC0115','OC0116','OC0117','OC0201','OC0202','OC0203','OC0204','OC0701','OC0702','OC0703',
+    #                      'PA0403','PA0425','PA0438','PA0807','PA1101','PA1109','PA1113','PA1203'
+    # )
     
     #lc_map <- tibble(LC_TYPE = lc_type,LC_BTC=btc_type)
     lc_map <- lc_class %>% select(LC, LC_bii)
@@ -604,27 +550,31 @@ get_biodiversity <- function(data,
     # Add coefficients and compute impact
     results_csar <- results_csar %>% map_df(~process_csar(.,lc_class = lc_class,
                                                           eco_map = eco_map,
-                                                          csar_coefs = csar_coefs)) %>% rbind %>% 
-      filter(! ecoregion %in% my_excluded_ers) 
+                                                          csar_coefs = csar_coefs)) %>% rbind 
+    # %>% 
+    #   filter(! ecoregion %in% my_excluded_ers) 
     
     # Calculate extinctions at ecoregion level
     csar_simu <- results_csar %>%
       group_by(REGION,times,ns) %>%
-      summarise(extinctions=sum(extinctions)) %>% ungroup() %>%
+      summarise(extinctions=sum(extinctions, na.rm=TRUE),
+                value = sum(value,na.rm=TRUE)) %>% ungroup() %>%
       mutate(score=1-extinctions) %>% 
       mutate(score=ifelse(score <0,0,score)) %>% mutate(ScenNr=scen)
     
     # Calculate total extinctions
     csar_REGION <- results_csar %>%
       group_by(REGION,times,ecoregion) %>%
-      summarise(extinctions=sum(extinctions)) %>%
+      summarise(extinctions=sum(extinctions, na.rm=TRUE)) %>%
       mutate(score=extinctions) %>% mutate(score=ifelse(score <0,0,score))
     
     csar <- csar_REGION %>%
       group_by(REGION,times) %>% 
-      summarise(score=1-sum(score)) %>% 
+      summarise(score=1-sum(score, na.rm=TRUE)) %>% 
       mutate(score=ifelse(score <0,0,score)) %>% mutate(ScenNr=scen)
     
+    # Checks
+    test_LUdata(results_csar)
     
   } else {
     csar_simu <- csar <- NULL

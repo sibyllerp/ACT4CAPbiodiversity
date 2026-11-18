@@ -6,7 +6,10 @@
 #' @param to_col character string. colname from mapping file
 #' @param ext_cols character string. colname from dt of absolute variables
 #' @param int_cols character string. colname from dt of ratio variables (wmean)
+#' @param keep_cols character string. colname from dt to keep 
 #' @param dt datatable. initial datatable
+#' @param mg datatable. mapping
+#' 
 #' 
 #' 
 #' @return dt at the target level (to_col)
@@ -69,3 +72,49 @@ if (length(int_cols)) {
 return(out)
 }
 
+
+#' checks
+#'
+#' The function checks consistency in land use data (no increase over time)
+#' 
+#' @param land_data dataframe with land data (columns REGION, ns, times, LC)
+#' 
+#' 
+#' @return warnings
+#' @import tidyverse
+#' 
+#' 
+#' @export
+#' 
+
+
+test_LUdata <- function(land_data){
+  
+  # Checks - to be checked - currently fails
+  check_lu <- land_data %>% filter(value>0) %>%
+    group_by(REGION, ns, times, LC) %>%
+    summarise(value=sum(value, na.rm=TRUE), .groups = "drop") %>%
+    ungroup() %>%
+    pivot_wider(names_from = "LC") %>%
+    mutate(total = rowSums(across(-c(REGION,ns, times)), na.rm=TRUE))%>%
+    group_by(REGION, ns) %>%
+    arrange(times, .by_group = TRUE) %>%
+    mutate(change_vs_first = total - first(total),
+           change_vs_prev  = total - lag(total)) %>%
+    ungroup()
+  
+  # check 1: change vs first
+  chk1 <- all.equal(max(check_lu$change_vs_first), 0, tolerance = 1e-6)
+  if (!isTRUE(chk1)) {
+    warning("check_lu: change_vs_first differs from 0: ", paste(chk1, collapse = "; "),
+            call. = FALSE)
+  }
+  
+  # check 2: change vs previous
+  chk2 <- all.equal(max(check_lu$change_vs_prev, na.rm = TRUE), 0, tolerance = 1e-6)
+  if (!isTRUE(chk2)) {
+    warning("check_lu: change_vs_prev differs from 0: ", paste(chk2, collapse = "; "),
+            call. = FALSE)
+  }
+  
+}
